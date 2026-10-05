@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>File Portal</title>
+<style>
+  :root {
+    --bg: #e9eff0; --panel: #fbfdfd; --ink: #12282c; --muted: #5b7276;
+    --line: #cbd9db; --accent: #0b6e6e; --accent-ink: #ffffff;
+    --warn: #b42318; --ok: #0b6e3a;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1a1d; --panel: #13252a; --ink: #e6f0f0; --muted: #8fa7ab;
+      --line: #244047; --accent: #3fb8b0; --accent-ink: #082022;
+      --warn: #ff8a7a; --ok: #6fd49a;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+
+  main { max-width: 680px; margin: 0 auto; padding: 3rem 1.25rem 4rem; }
+
+  h1 {
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: clamp(2rem, 6vw, 3rem);
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    line-height: 1.1;
+    margin: 0 0 0.5rem;
+  }
+
+  .lead { color: var(--muted); margin: 0 0 2rem; }
+
+  .connect { display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 1.5rem; }
+  .connect input { flex: 1 1 200px; }
+
+  input[type="text"], input[type="password"] {
+    font: inherit;
+    color: var(--ink);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0.6rem 0.75rem;
+    min-width: 0;
+  }
+
+  button {
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    border-radius: 8px;
+    border: 1px solid var(--accent);
+    background: var(--accent);
+    color: var(--accent-ink);
+    padding: 0.6rem 1rem;
+    transition: opacity 0.15s;
+  }
+  button:hover { opacity: 0.88; }
+  button.quiet { background: transparent; color: var(--accent); padding: 0.35rem 0.75rem; }
+
+  input:focus-visible, button:focus-visible, .zone:focus-within {
+    outline: 3px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .zone {
+    display: block;
+    cursor: pointer;
+    background: var(--panel);
+    border: 2px dashed var(--line);
+    border-radius: 20px;
+    padding: 3.5rem 1.5rem;
+    text-align: center;
+    transition: border-color 0.15s, background 0.15s;
+  }
+  .zone:hover, .zone.drag { border-color: var(--accent); background: var(--bg); }
+  .zone strong {
+    display: block;
+    font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    font-size: 1.6rem;
+    font-weight: 600;
+    margin-bottom: 0.25rem;
+  }
+  .zone span { color: var(--muted); }
+  .sr-only {
+    position: absolute; width: 1px; height: 1px; overflow: hidden;
+    clip: rect(0 0 0 0); white-space: nowrap;
+  }
+
+  .status { min-height: 1.5rem; margin: 0.75rem 0 1.5rem; color: var(--muted); }
+  .status.ok { color: var(--ok); }
+  .status.error { color: var(--warn); }
+
+  h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
+
+  ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  li {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    padding: 0.75rem 0; border-bottom: 1px solid var(--line);
+  }
+  li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .empty { color: var(--muted); padding: 1rem 0; border-bottom: 1px solid var(--line); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Files on kserver</h1>
+  <p class="lead">Upload to your own server and download from anywhere.</p>
+
+  <div class="connect">
+    <input id="api" type="text" placeholder="Tunnel URL" aria-label="Tunnel URL">
+    <input id="token" type="password" placeholder="Token" aria-label="Token">
+    <button id="connect">Connect</button>
+  </div>
+
+  <label class="zone" id="zone">
+    <input class="sr-only" id="file" type="file">
+    <strong>Drop a file here</strong>
+    <span>or click to choose one. Up to 100 MB.</span>
+  </label>
+
+  <p class="status" id="status" aria-live="polite"></p>
+
+  <h2 id="count">On the server</h2>
+  <ul id="list"></ul>
+  <p class="empty" id="empty">Connect, then drop a file above to get started.</p>
+</main>
+
+<script>
+  const $ = id => document.getElementById(id);
+  const base = () => $("api").value.trim().replace(/\/$/, "");
+  const headers = () => ({ Authorization: "Bearer " + $("token").value.trim() });
+
+  function say(text, type = "") {
+    $("status").textContent = text;
+    $("status").className = "status " + type;
+  }
+
+  async function call(path, options = {}) {
+    const res = await fetch(base() + path, { ...options, headers: headers() });
+    if (res.status === 401) throw new Error("Wrong token. Paste the token from kserver.");
+    if (res.status === 413) throw new Error("That file is over the 100 MB limit.");
+    if (!res.ok) throw new Error("The server returned an error (" + res.status + ").");
+    return res;
+  }
+
+  async function run(task) {
+    try { await task(); }
+    catch (e) {
+      say(e instanceof TypeError
+        ? "Can't reach the server. Check that the tunnel is running and the URL is current."
+        : e.message, "error");
+    }
+  }
+
+  function render(files) {
+    $("list").innerHTML = "";
+    $("empty").hidden = files.length > 0;
+    $("empty").textContent = "No files yet. Drop one above to upload it.";
+    $("count").textContent = "On the server (" + files.length + ")";
+    files.forEach(name => {
+      const li = document.createElement("li");
+      const label = document.createElement("span");
+      const button = document.createElement("button");
+      label.textContent = name;
+      button.textContent = "Download";
+      button.className = "quiet";
+      button.onclick = () => run(() => download(name));
+      li.append(label, button);
+      $("list").appendChild(li);
+    });
+  }
+
+  async function load() {
+    say("Connecting…");
+    const files = await (await call("/files")).json();
+    localStorage.setItem("api", base());
+    render(files);
+    say("Connected.", "ok");
+  }
+
+  async function upload(file) {
+    say("Uploading " + file.name + "…");
+    const data = new FormData();
+    data.append("file", file);
+    await call("/upload", { method: "POST", body: data });
+    await load();
+    say(file.name + " uploaded.", "ok");
+  }
+
+  async function download(name) {
+    say("Downloading " + name + "…");
+    const res = await call("/download/" + encodeURIComponent(name));
+    const url = URL.createObjectURL(await res.blob());
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+    say(name + " downloaded.", "ok");
+  }
+
+  $("api").value = localStorage.getItem("api") || "";
+  $("connect").onclick = () => run(load);
+
+  $("file").addEventListener("change", e => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (file) run(() => upload(file));
+  });
+
+  $("zone").addEventListener("dragover", e => {
+    e.preventDefault();
+    $("zone").classList.add("drag");
+  });
+  $("zone").addEventListener("dragleave", () => $("zone").classList.remove("drag"));
+  $("zone").addEventListener("drop", e => {
+    e.preventDefault();
+    $("zone").classList.remove("drag");
+    const file = e.dataTransfer.files[0];
+    if (file) run(() => upload(file));
+  });
+</script>
+</body>
+</html>
