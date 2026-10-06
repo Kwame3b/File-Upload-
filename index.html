@@ -67,6 +67,7 @@
   }
   button:hover { opacity: 0.88; }
   button.quiet { background: transparent; color: var(--accent); padding: 0.35rem 0.75rem; }
+  button.danger { color: var(--warn); border-color: var(--warn); }
 
   input:focus-visible, button:focus-visible, .zone:focus-within {
     outline: 3px solid var(--accent);
@@ -109,6 +110,7 @@
     padding: 0.75rem 0; border-bottom: 1px solid var(--line);
   }
   li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .actions { display: flex; gap: 0.5rem; flex-shrink: 0; }
   .empty { color: var(--muted); padding: 1rem 0; border-bottom: 1px solid var(--line); }
 </style>
 </head>
@@ -118,7 +120,7 @@
   <p class="lead">Upload to your own server and download from anywhere.</p>
 
   <div class="connect">
-    <input id="api" type="text" placeholder="Tunnel URL" aria-label="Tunnel URL">
+    <input id="api" type="text" placeholder="Tunnel address" aria-label="Tunnel address">
     <input id="token" type="password" placeholder="Token" aria-label="Token">
     <button id="connect">Connect</button>
   </div>
@@ -138,8 +140,13 @@
 
 <script>
   const $ = id => document.getElementById(id);
-  const base = () => $("api").value.trim().replace(/\/$/, "");
   const headers = () => ({ Authorization: "Bearer " + $("token").value.trim() });
+
+  function base() {
+    let v = $("api").value.trim();
+    if (v && !/^https?:\/\//.test(v)) v = "https://" + v;
+    try { return new URL(v).origin; } catch { return ""; }
+  }
 
   function say(text, type = "") {
     $("status").textContent = text;
@@ -147,8 +154,10 @@
   }
 
   async function call(path, options = {}) {
+    if (!base()) throw new Error("Enter the tunnel address first.");
     const res = await fetch(base() + path, { ...options, headers: headers() });
-    if (res.status === 401) throw new Error("Wrong token. Paste the token from kserver.");
+    if (res.status === 401) throw new Error("Wrong token. Use the latest one from kserver.");
+    if (res.status === 404) throw new Error("That file is no longer on the server.");
     if (res.status === 413) throw new Error("That file is over the 100 MB limit.");
     if (!res.ok) throw new Error("The server returned an error (" + res.status + ").");
     return res;
@@ -158,7 +167,7 @@
     try { await task(); }
     catch (e) {
       say(e instanceof TypeError
-        ? "Can't reach the server. Check that the tunnel is running and the URL is current."
+        ? "Can't reach the server. Check that the tunnel is running and the address is current. If the browser console mentions CORS, ALLOWED_ORIGIN on the server does not match this page's address."
         : e.message, "error");
     }
   }
@@ -171,12 +180,19 @@
     files.forEach(name => {
       const li = document.createElement("li");
       const label = document.createElement("span");
-      const button = document.createElement("button");
+      const actions = document.createElement("div");
+      const get = document.createElement("button");
+      const del = document.createElement("button");
       label.textContent = name;
-      button.textContent = "Download";
-      button.className = "quiet";
-      button.onclick = () => run(() => download(name));
-      li.append(label, button);
+      actions.className = "actions";
+      get.textContent = "Download";
+      get.className = "quiet";
+      get.onclick = () => run(() => download(name));
+      del.textContent = "Delete";
+      del.className = "quiet danger";
+      del.onclick = () => run(() => remove(name));
+      actions.append(get, del);
+      li.append(label, actions);
       $("list").appendChild(li);
     });
   }
@@ -184,6 +200,7 @@
   async function load() {
     say("Connecting…");
     const files = await (await call("/files")).json();
+    $("api").value = base();
     localStorage.setItem("api", base());
     render(files);
     say("Connected.", "ok");
@@ -208,6 +225,14 @@
     a.click();
     URL.revokeObjectURL(url);
     say(name + " downloaded.", "ok");
+  }
+
+  async function remove(name) {
+    if (!confirm("Delete " + name + " from the server? This cannot be undone.")) return;
+    say("Deleting " + name + "…");
+    await call("/delete/" + encodeURIComponent(name), { method: "DELETE" });
+    await load();
+    say(name + " deleted.", "ok");
   }
 
   $("api").value = localStorage.getItem("api") || "";
